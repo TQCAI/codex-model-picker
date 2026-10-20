@@ -1,0 +1,18 @@
+<!doctype html><html lang="zh"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Codex 外部模型</title>
+<style>body{font:16px -apple-system,BlinkMacSystemFont,sans-serif;background:#f6f7f9;color:#20242c;margin:0}main{max-width:820px;margin:60px auto;padding:30px}h1{font-size:30px}p{color:#596271;line-height:1.7}.card{background:white;border:1px solid #e0e3e8;padding:24px;border-radius:18px;margin:22px 0}label{display:block;margin:15px 0 6px;font-size:14px}input{box-sizing:border-box;width:100%;padding:11px;border:1px solid #cbd1da;border-radius:8px;font:inherit}button{border:0;border-radius:9px;padding:12px 18px;background:#20242c;color:white;font:inherit;cursor:pointer;margin:12px 8px 0 0}.secondary{background:#e9ecf1;color:#20242c}pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px}small{color:#596271}.badge{display:inline-block;padding:5px 10px;background:#fff0cc;border-radius:20px;font-size:12px}</style>
+<main><span class="badge">实验版 · 尚未安装原生菜单补丁</span><h1>为 Codex 添加外部模型</h1><p>保存服务配置，再生成原生模型菜单补丁。外部模型按新聊天选择；CLI 和其他聊天保持各自的 provider。</p>
+<div id="providers"></div><div class="card"><h2>添加模型服务</h2>
+<label for="name">服务名称</label><input id="name" placeholder="例如：我的网关">
+<label for="pid">服务 ID（picker_ 开头）</label><input id="pid" value="picker_custom">
+<label for="url">Responses API Base URL</label><input id="url" placeholder="https://gateway.example/v1">
+<label for="env">API Key 环境变量名（不在这里填写密钥）</label><input id="env" value="EXTERNAL_MODEL_API_KEY">
+<label for="models">模型 ID（多个以逗号分隔）</label><input id="models" placeholder="deepseek-model, another-model">
+<button id="add">添加 / 更新</button><small>服务必须支持 Responses API；仅兼容 Chat Completions 的服务还需协议适配。</small></div>
+<button id="save">保存配置</button><button class="secondary" id="build">生成菜单补丁候选</button><p>生成操作只写入本项目 candidate 目录，不修改应用包或 ~/.codex/config.toml。安装后需重启桌面端；应用更新后需重新检查兼容性。</p><pre id="status" role="status"></pre></main>
+<script>/*BOOTSTRAP*/
+const catalog=window.bootstrap.catalog, token=window.bootstrap.token;
+const status=document.querySelector('#status');
+function render(){const root=document.querySelector('#providers');root.replaceChildren();for(const p of catalog.providers){const card=document.createElement('div');card.className='card';const title=document.createElement('h3');title.textContent=p.name;const text=document.createElement('p');text.textContent=p.models.map(m=>m.id).join(' · ');const remove=document.createElement('button');remove.className='secondary';remove.textContent='移除';remove.onclick=()=>{catalog.providers=catalog.providers.filter(q=>q!==p);render()};card.append(title,text,remove);root.append(card)}}
+document.querySelector('#add').onclick=()=>{const read=id=>document.getElementById(id).value.trim();const p={id:read('pid'),name:read('name'),config:{name:read('name'),base_url:read('url'),wire_api:'responses',requires_openai_auth:false,supports_websockets:false},models:read('models').split(',').map(id=>({id:id.trim()})).filter(m=>m.id)};if(read('env'))p.config.env_key=read('env');catalog.providers=catalog.providers.filter(q=>q.id!==p.id);catalog.providers.push(p);render()};
+for(const action of ['save','build'])document.getElementById(action).onclick=async()=>{try{status.textContent='处理中…';const response=await fetch('/'+action,{method:'POST',headers:{'Content-Type':'application/json','X-Picker-Token':token},body:JSON.stringify(catalog)});const result=await response.json();status.textContent=JSON.stringify(result,null,2)}catch(e){status.textContent=String(e)}};render();
+</script></html>

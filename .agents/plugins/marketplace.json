@@ -1,0 +1,1 @@
+{"name":"local-model-picker","interface":{"displayName":"本地模型管理"},"plugins":[{"name":"model-picker","source":{"source":"local","path":"./plugin"},"policy":{"installation":"AVAILABLE","authentication":"ON_INSTALL"}}]}

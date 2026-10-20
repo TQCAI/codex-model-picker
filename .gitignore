@@ -1,0 +1,21 @@
+# Generated official-app copies, installers and machine-specific evidence
+research/
+candidate/
+preview*/
+native-package/
+*.pkg
+*.app/
+*.log
+*-report.json
+*receipt*.json
+__pycache__/
+*.pyc
+.DS_Store
+# Real credentials/configuration must never be committed
+.env
+.env.*
+!.env.example
+catalog.json
+secrets/
+runtime-test-profile/
+恢复安装前版本.command
