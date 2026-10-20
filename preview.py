@@ -77,6 +77,8 @@ def main():
     metadata=subprocess.run(['codesign','-dv','--verbose=4',str(target)],capture_output=True,text=True,check=True).stderr
     codehash=next(line.split('=',1)[1] for line in metadata.splitlines() if line.startswith('CDHash='))
     report={'app':str(target),'sourceApp':str(APP),'codeHash':codehash,'installed':False,
+            'routerSha256':hashlib.sha256((ROOT/'src/router.js').read_bytes()).hexdigest(),
+            'patcherSha256':hashlib.sha256((ROOT/'picker.py').read_bytes()).hexdigest(),
             'sameMainEntitlements':entitlements(target)==current_entitlements,
             'preservesFileTree':True,'integrityEnabled':True,'nativeGuiValidated':False}
     (args.out/'build-report.json').write_text(json.dumps(report,indent=2)+'\n')

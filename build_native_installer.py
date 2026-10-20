@@ -30,6 +30,8 @@ def main():
     metadata=subprocess.run(['/usr/bin/codesign','-dv','--verbose=4',str(STAGE)],capture_output=True,text=True,check=True).stderr
     codehash=next(line.split('=',1)[1] for line in metadata.splitlines() if line.startswith('CDHash='))
     preview_report=json.loads((STAGE.parent/'build-report.json').read_text())
+    if preview_report.get('routerSha256') != digest(BASE/'src/router.js') or preview_report.get('patcherSha256') != digest(BASE/'picker.py'):
+        raise ValueError('Preview was built with different patch sources; rebuild before packaging')
     if not evidence.get('aliveAfter30s') or evidence.get('rendererSyntaxError') or evidence.get('asarIntegrityError') or codehash != preview_report.get('codeHash'):
         raise ValueError('Candidate must match the successful real startup test')
     if not preview_report.get('sameMainEntitlements'):
@@ -131,10 +133,10 @@ echo '补丁已安装，签名及完整文件哈希通过，Codex 已重新打�
     values[0].update(BundleIsRelocatable=False,BundleIsVersionChecked=False,BundleHasStrictIdentifier=True,BundleOverwriteAction='upgrade')
     components.write_bytes(plistlib.dumps(values))
     identifier='local.codex-model-picker.native'
-    run('/usr/bin/pkgbuild','--root',payload,'--component-plist',components,'--scripts',scripts,'--identifier',identifier,'--version','0.1.0','--install-location','/Applications','--ownership','preserve',WORK/'CodexModelPicker-component.pkg')
+    run('/usr/bin/pkgbuild','--root',payload,'--component-plist',components,'--scripts',scripts,'--identifier',identifier,'--version','0.2.0','--install-location','/Applications','--ownership','preserve',WORK/'CodexModelPicker-component.pkg')
     resources=WORK/'resources';resources.mkdir(exist_ok=True)
-    (resources/'welcome.html').write_text('''<html><meta charset="utf-8"><body><h2>Codex DS V4 模型菜单（非官方）</h2><p>先保持此安装窗口打开，用 ⌘Q 正常退出 Codex，再返回本窗口继续安装。系统安装器会请求 macOS 管理员授权。</p><p>安装后会尝试自动重新打开；请勿手动提前启动。</p><p>此包固定适配本机 26.1013.40934 文件树增强版；保留文件树补丁，为新聊天的模型菜单添加 DeepSeek · V4 Pro。外部模型选择不改共享默认 provider。</p><p><strong>已知影响：</strong>保留本机已安装文件树增强版的签名权限方案，不新增权限例外。现有本地签名导致的部分内置工具拒绝连接仍存在；不恢复厂商身份。此版通过独立副本启动、菜单接线和真实 DeepSeek API 检查，但原生 GUI 自动化服务不可用，实际点击菜单尚未验收。</p><p>安装前会验证安装前版本并保存完整备份。签名或启动检查失败时，会在应用已停止的条件下尝试恢复安装前版本；不会关闭系统 Gatekeeper、SIP 或强制结束应用。</p></body></html>''')
-    (resources/'conclusion.html').write_text('''<html><meta charset="utf-8"><body><h2>安装完成</h2><p>Codex 应已重新打开。请新建聊天，打开输入框下方的模型菜单，选择 DeepSeek · V4 Pro，再发送一句简单测试消息。</p><p>已有聊天暂不支持跨 provider 切换，请新建聊天。同一个菜单仍保留 OpenAI 模型，原文件树增强功能保留。</p><p>安装前备份由管理员保护，位于 /Library/Application Support/CodexModelPicker。用户目录下原有备份也继续保留。</p></body></html>''')
+    (resources/'welcome.html').write_text('''<html><meta charset="utf-8"><body><h2>Codex DS V4 模型菜单（非官方）</h2><p>先保持此安装窗口打开，用 ⌘Q 正常退出 Codex，再返回本窗口继续安装。系统安装器会请求 macOS 管理员授权。</p><p>安装后会尝试自动重新打开；请勿手动提前启动。</p><p>此包固定适配本机 26.1013.40934 文件树增强版；保留文件树补丁，为新聊天的模型菜单添加 DeepSeek · V4 Pro。外部模型选择不改共享默认 provider。</p><p><strong>已知影响：</strong>保留本机已安装文件树增强版的签名权限方案，不新增权限例外。现有本地签名导致的部分内置工具拒绝连接仍存在；不恢复厂商身份。此版通过独立副本启动、菜单接线及真实后端往返切换检查，但原生 GUI 自动化服务不可用，实际点击菜单尚未验收。</p><p>安装前会验证安装前版本并保存完整备份。签名或启动检查失败时，会在应用已停止的条件下尝试恢复安装前版本；不会关闭系统 Gatekeeper、SIP 或强制结束应用。</p></body></html>''')
+    (resources/'conclusion.html').write_text('''<html><meta charset="utf-8"><body><h2>安装完成</h2><p>Codex 应已重新打开。请新建聊天，打开输入框下方的模型菜单，选择 DeepSeek · V4 Pro，再发送一句简单测试消息。</p><p>空闲持久聊天现在支持往返切换 provider，并保留聊天 ID 和历史。运行中、后台任务、未结束目标或含未归档子聊天时会拒绝切换。同一个菜单仍保留 OpenAI 模型，原文件树增强功能保留。</p><p>安装前备份由管理员保护，位于 /Library/Application Support/CodexModelPicker。用户目录下原有备份也继续保留。</p></body></html>''')
     distribution=WORK/'distribution.xml'
     distribution.write_text(f'''<?xml version="1.0" encoding="utf-8"?>
 <installer-gui-script minSpecVersion="2">
@@ -143,9 +145,9 @@ echo '补丁已安装，签名及完整文件哈希通过，Codex 已重新打�
 <domains enable_anywhere="false" enable_currentUserHome="false" enable_localSystem="true"/>
 <choices-outline><line choice="default"><line choice="payload"/></line></choices-outline>
 <choice id="default"/><choice id="payload" visible="false"><pkg-ref id="{identifier}"/></choice>
-<pkg-ref id="{identifier}" version="0.1.0" auth="Root">CodexModelPicker-component.pkg</pkg-ref>
+<pkg-ref id="{identifier}" version="0.2.0" auth="Root">CodexModelPicker-component.pkg</pkg-ref>
 </installer-gui-script>''')
-    output=BASE/'Codex-DSV4-模型菜单.pkg'
+    output=BASE/'Codex-DSV4-模型菜单-0.2.0.pkg'
     run('/usr/bin/productbuild','--distribution',distribution,'--package-path',WORK,'--resources',resources,output)
     (WORK/'build-report.json').write_text(json.dumps({'package':str(output),'originalFullAsarSHA256':original,'candidateFullAsarSHA256':candidate,'candidateCodeHash':codehash,'rootBackup':store+'/Original.app','builtAt':build_id,'nativeGuiValidated':False,'menuLabel':'DeepSeek · V4 Pro','model':'deepseek-v4-pro','preservesFileTree':True},indent=2)+'\n')
     make_restore(BASE)

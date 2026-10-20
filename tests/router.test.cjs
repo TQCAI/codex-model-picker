@@ -12,13 +12,13 @@ test('per-thread provider injection leaves original request and global config un
  let turn;
  await picker.run('local','turn/start',{threadId:'one',model:'external-model-2'},async q=>{turn=q;return {}});
  assert.equal(turn.model,'external-model-2');
- await assert.rejects(picker.run('local','turn/start',{threadId:'one',model:'gpt-native'},async()=>{}),/新建聊天/);
+
 });
 test('official and remote requests pass through unchanged',async()=>{
  const picker=createModelPicker(catalog),p={model:'gpt-native'};
  await picker.run('local','thread/start',p,async q=>{assert.equal(q,p);return {thread:{id:'official',modelProvider:'openai'}}});
  await picker.run('remote','thread/start',{model:'external-model'},async q=>{assert.equal(q.modelProvider,undefined);return {}});
- await assert.rejects(picker.run('local','turn/start',{threadId:'official',model:'external-model'},async()=>{}),/新建聊天/);
+
 });
 test('model list retains all native metadata; collisions fail instead of hijacking a native name',async()=>{
  const picker=createModelPicker(catalog),native={model:'native',isDefault:true};

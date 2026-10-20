@@ -1,17 +1,27 @@
 # Codex Model Picker
 
-为 macOS Codex 的原生模型菜单添加外部模型选择，当前主要适配 **DeepSeek V4 Pro**（`deepseek-v4-pro`）。新建聊天时选择 `DeepSeek · V4 Pro`，按聊天传入 provider 配置，不将外部 provider 写成 CLI 的共享默认项。
+为 macOS Codex 的原生模型菜单添加外部模型选择，当前主要适配 **DeepSeek V4 Pro**（`deepseek-v4-pro`）。选择 `DeepSeek · V4 Pro`，空闲聊天可在 DeepSeek 与 GPT 之间往返切换，按聊天传入 provider 配置，不将外部 provider 写成 CLI 的共享默认项。
 
 **这是实验性、固定版本的客户端补丁，不是官方即装即用的菜单扩展。** 另有标准伴随 skill 插件，用于打开模型管理网页和启动独立 CLI；仅安装伴随插件不会修改原生菜单。
 
 ## 状态与限制
 
 - 适配目标：macOS Apple Silicon，承载 Codex 的 `/Applications/ChatGPT.app`，版本 `26.1013.40934`、构建 `20770`。应用版本或编译资源变化后必须重新适配。
-- 本机验证：8 项路由/编译资源接线检查、两个本地 Responses 服务 A → B → A 路由、真实 DeepSeek API 请求，以及独立应用副本持续启动 30 秒。
+- 本机验证：13 项路由/编译资源接线检查、真实后端配合本地模拟接口的 DS → GPT → DS → GPT 往返切换、真实 DeepSeek API 请求，以及独立应用副本持续启动 30 秒。
 - **原生菜单实际点击与从原生 GUI 发送尚未验收**：作者机器的原生 GUI 自动化服务不可用。代码接线、启动或签名检查不能替代这一项。
-- 当前只支持本机 local 聊天和 Responses API。已有聊天暂不支持跨 provider 切换，请新建聊天；同一外部 provider 内可选择已登记的模型。
+- 当前只支持本机 local 聊天和 Responses API。空闲的持久聊天支持跨 provider 切换并保留 ID 和历史。临时聊天、运行中任务、有后台终端、未结束目标或未归档子聊天时拒绝切换；同一 provider 内仍走原生模型设置更新。
 - 外部模型 ID 必须唯一，不能与原生模型 ID 冲突。联网搜索、插件、图像等能力不保证与 OpenAI provider 等价。
 - 原生补丁可叠加在已安装的文件树增强版上。本机已核对文件树模块、preload 和启动入口内容保持一致；其他机器仍须重新验证。
+
+## 0.2.0：修复 DeepSeek 无法切回 GPT
+
+0.1.0 在已有外部聊天的 `thread/settings/update` 中直接拒绝跨 provider 切换，表现为“无法更新模型设置”。0.2.0 在空闲持久聊天中，先读取原有权限和状态，暂时 archive/unarchive 以卸载旧 runtime，再以目标 provider 恢复同一个聊天 ID。回到 GPT 时显式选择 `openai`，不继续附带 DeepSeek 的 provider 配置或模型目录。
+
+这不是删除或新建聊天。已用真实 bundled app-server 和本地模拟 Responses 接口验证 DS → GPT → DS → GPT：同一 ID、四轮历史、实际 HTTP 目的地、权限、其他聊天及全局配置均符合预期，卸载后记录的 provider 也保持正确。模拟接口测试不代表真实 GPT 账号/API 调用验收。
+
+切换期间过滤临时归档通知，完成后同步 GUI 缓存中的 provider；失败会恢复原 provider 和权限。禁止在有后台终端、未结束目标、未归档子聊天或运行中 turn 的聊天上进行这种 runtime 重载，避免停止其他工作。快速连续选择按聊天串行处理。
+
+构建器只允许覆盖已知 0.1.0 路由器指纹的旧补丁，未知补丁拒绝升级；安装包仍核对当前完整应用哈希。新包名为 `Codex-DSV4-模型菜单-0.2.0.pkg`。本机实际原生 GUI 点击验收仍需安装后进行。
 
 ## 签名影响
 
@@ -32,7 +42,7 @@ npm test
 python3 -m py_compile picker.py manager.py install.py preview.py recovery.py build_native_installer.py
 ```
 
-没有 npm 第三方依赖。干净源码目录运行 `npm test` 会通过 5 项路由测试，并明确跳过需要本机原生候选资源的 3 项编译资源接线测试；生成候选后再运行，会执行全部 8 项。官方客户端编译资源不包含在仓库中。
+没有 npm 第三方依赖。干净源码目录运行 `npm test` 会通过 10 项路由测试，并明确跳过需要本机原生候选资源的 3 项编译资源接线测试；生成候选后再运行，会执行全部 13 项。官方客户端编译资源不包含在仓库中。
 
 ## 配置模型与打开管理页面
 
@@ -84,7 +94,7 @@ python3 build_native_installer.py
 
 生成的 `.pkg` **只供完成本机检查的这台机器使用**，不会自动安装。保留系统安装器窗口，用 ⌘Q 正常退出 Codex/ChatGPT，再在安装器中完成安装和管理员授权。安装器核对当前完整 ASAR 哈希、备份安装前应用、安装后检查签名并尝试重新打开。不会强制结束运行中的应用。
 
-安装后新建空聊天，打开模型菜单选择 `DeepSeek · V4 Pro` 并发送简单消息；也应回归检查原有文件树功能。本机已有的签名功能损失不能因为菜单工作就忽略。
+安装后先在测试聊天中选择 `DeepSeek · V4 Pro`，完成一轮后切回 GPT，再验证下一轮请求；也应回归检查原有文件树功能。本机已有的签名功能损失不能因为菜单工作就忽略。
 
 旧的 `install.py install` 简单重签路径已禁用，因为它不能正确更新该版本框架中的完整性摘要。
 
@@ -107,6 +117,8 @@ codex plugin add model-picker@local-model-picker
 
 ```sh
 python3 tests/live_smoke.py
+# 同一聊天的 provider 往返切换、历史、权限、回滚相关验证；不调用真实模型 API：
+node tests/live_provider_switch.cjs
 # 以下命令会发送一次很短的真实模型 API 请求：
 python3 tests/external_smoke.py \
   --catalog "$HOME/.local/share/codex-model-picker/catalog.json"
