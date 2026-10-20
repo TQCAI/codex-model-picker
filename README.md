@@ -7,11 +7,19 @@
 ## 状态与限制
 
 - 适配目标：macOS Apple Silicon，承载 Codex 的 `/Applications/ChatGPT.app`，版本 `26.1013.40934`、构建 `20770`。应用版本或编译资源变化后必须重新适配。
-- 本机验证：13 项路由/编译资源接线检查、真实后端配合本地模拟接口的 DS → GPT → DS → GPT 往返切换、真实 DeepSeek API 请求，以及独立应用副本持续启动 30 秒。
+- 本机验证：19 项路由/历史兼容/编译资源接线检查、真实后端配合本地模拟接口的 DS → GPT → DS → GPT 往返切换、真实 DeepSeek API 请求，以及独立应用副本持续启动 30 秒。
 - **原生菜单实际点击与从原生 GUI 发送尚未验收**：作者机器的原生 GUI 自动化服务不可用。代码接线、启动或签名检查不能替代这一项。
 - 当前只支持本机 local 聊天和 Responses API。空闲的持久聊天支持跨 provider 切换并保留 ID 和历史。临时聊天、运行中任务、有后台终端、未结束目标或未归档子聊天时拒绝切换；同一 provider 内仍走原生模型设置更新。
 - 外部模型 ID 必须唯一，不能与原生模型 ID 冲突。联网搜索、插件、图像等能力不保证与 OpenAI provider 等价。
 - 原生补丁可叠加在已安装的文件树增强版上。本机已核对文件树模块、preload 和启动入口内容保持一致；其他机器仍须重新验证。
+
+## 0.2.1：保留推理正文，修复切到 GPT 后的请求错误
+
+DeepSeek 的 `reasoning.content` 中包含明文 `reasoning_text`；GPT 接口拒绝这种输入，报 `array_above_max_length`。切换时把它表示为普通 assistant 历史文本，正文保持原样，不逐条加备注，也不重复发送摘要。原始推理记录和来源保存在本地额外字段中，不进入模型请求；切回原 provider 时恢复原始结构。其他 provider 的加密推理不会直接转发，能用的摘要转成普通文本，无文本时保留空推理占位。
+
+这会在聊天空闲并卸载 runtime 后，转换其本地 rollout 中的推理表示。转换前保留完整 `.model-picker-*.bak` 备份，验证备份与原文件一致；写入后读回校验，失败恢复原文件再恢复原 provider。用户消息、最终答复、工具调用及结果保持原样。备份和原始字段会多占本地空间，不增加请求中的重复正文。已有 0.2.0 切到 GPT 后报错的聊天也会在下一次空闲发送时检查并转换；兼容的普通 GPT 聊天不会归档或写历史。
+
+已用包含推理记录、严格拒绝不兼容输入的本地接口复现旧错误，并验证修复后的 DS → GPT → DS → GPT；测试覆盖桌面端分页历史。另用真实 GPT-6.1 Sol 和 DeepSeek API 验证：GPT 可读取前序推理文字并正常回复，随后可切回 DeepSeek。真实接口测试使用独立临时聊天，不修改原有聊天；原生菜单点击仍需安装后验收。
 
 ## 0.2.0：修复 DeepSeek 无法切回 GPT
 
@@ -21,7 +29,7 @@
 
 切换期间过滤临时归档通知，完成后同步 GUI 缓存中的 provider；失败会恢复原 provider 和权限。禁止在有后台终端、未结束目标、未归档子聊天或运行中 turn 的聊天上进行这种 runtime 重载，避免停止其他工作。快速连续选择按聊天串行处理。
 
-构建器只允许覆盖已知 0.1.0 路由器指纹的旧补丁，未知补丁拒绝升级；安装包仍核对当前完整应用哈希。新包名为 `Codex-DSV4-模型菜单-0.2.0.pkg`。本机实际原生 GUI 点击验收仍需安装后进行。
+构建器只允许覆盖已知 0.1.0、0.2.0 或当前路由器指纹的旧补丁，未知补丁拒绝升级；安装包仍核对当前完整应用哈希。新包名为 `Codex-DSV4-模型菜单-0.2.1.pkg`。本机实际原生 GUI 点击验收仍需安装后进行。
 
 ## 签名影响
 
@@ -42,7 +50,7 @@ npm test
 python3 -m py_compile picker.py manager.py install.py preview.py recovery.py build_native_installer.py
 ```
 
-没有 npm 第三方依赖。干净源码目录运行 `npm test` 会通过 10 项路由测试，并明确跳过需要本机原生候选资源的 3 项编译资源接线测试；生成候选后再运行，会执行全部 13 项。官方客户端编译资源不包含在仓库中。
+没有 npm 第三方依赖。干净源码目录运行 `npm test` 会通过 16 项路由和历史兼容测试，并明确跳过需要本机原生候选资源的 3 项编译资源接线测试；生成候选后再运行，会执行全部 19 项。官方客户端编译资源不包含在仓库中。
 
 ## 配置模型与打开管理页面
 
@@ -119,6 +127,8 @@ codex plugin add model-picker@local-model-picker
 python3 tests/live_smoke.py
 # 同一聊天的 provider 往返切换、历史、权限、回滚相关验证；不调用真实模型 API：
 node tests/live_provider_switch.cjs
+# 使用本机登录凭据在临时目录运行两次简短真实 API 请求（不打印凭据）：
+node tests/real_reasoning_switch.cjs --catalog /absolute/local/catalog.json
 # 以下命令会发送一次很短的真实模型 API 请求：
 python3 tests/external_smoke.py \
   --catalog "$HOME/.local/share/codex-model-picker/catalog.json"

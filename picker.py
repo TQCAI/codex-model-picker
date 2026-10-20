@@ -86,7 +86,10 @@ def remove_previous_patch(source):
         return source
     position = source.index(marker)
     previous = source[:position]
-    if sha(previous.encode()) != '0707304b1dd473147a555d1f93bcb956d83940c578c8ada518a13eaf217daf59':
+    fingerprint=sha(previous.encode())
+    v1='0707304b1dd473147a555d1f93bcb956d83940c578c8ada518a13eaf217daf59'
+    v2='53b3442a8eef296df0bbab054edd576f21fcd8d7c30255e263d425a619cfa0fc'
+    if fingerprint not in {v1,v2,sha((ROOT/'src/router.js').read_bytes())}:
         raise ValueError('Unknown existing model-picker patch; refusing to overwrite')
     begin = position + len(marker)
     _, consumed = json.JSONDecoder().raw_decode(source[begin:])
@@ -94,9 +97,17 @@ def remove_previous_patch(source):
     if source[end:end+3] != ');\n':
         raise ValueError('Malformed previous model-picker catalog boundary')
     source = source[end+3:]
+    nested='' if fingerprint==v1 else ',(m,p)=>this.__pickerEnqueue(m,p,n)'
     source = once(source,
-        'enqueueRequest(e,t,n,...r){return __codexModelPicker.run(this.hostId,e,t,p=>this.__pickerEnqueue(e,p,n,...r))}__pickerEnqueue(e,t,n,r=t=>{',
+        'enqueueRequest(e,t,n,...r){return __codexModelPicker.run(this.hostId,e,t,p=>this.__pickerEnqueue(e,p,n,...r)'+nested+')}__pickerEnqueue(e,t,n,r=t=>{',
         'enqueueRequest(e,t,n,r=t=>{')
+    if fingerprint!=v1:
+        source=once(source,
+            'onNotification(e,t,n=null,r,i=Date.now()){if(__codexModelPicker.ignoreNotification(this.getHostId(),e,t))return;if(this.assertActive(),',
+            'onNotification(e,t,n=null,r,i=Date.now()){if(this.assertActive(),')
+        source=once(source,
+            'async runThreadModelSettingsUpdate(e,t){let r=await this.threadSettingsUpdates.runThreadModelSettingsUpdate(e,t);let p=__codexModelPicker.providerFor(e);if(this.getHostId()===`local`&&p!=null)this.updateConversationState(e,s=>{s.modelProvider=p});return r}',
+            'runThreadModelSettingsUpdate(e,t){return this.threadSettingsUpdates.runThreadModelSettingsUpdate(e,t)}')
     source = once(source,
         'setDefaultModelConfig(e,t,n){if(this.getHostId()===`local`&&__codexModelPicker.has(e))return Promise.resolve({status:`okOverridden`,version:`picker-memory-only`,filePath:``,overriddenMetadata:null});return this.defaultTurnConfig.writeModel(e,t,n)}',
         'setDefaultModelConfig(e,t,n){return this.defaultTurnConfig.writeModel(e,t,n)}')
