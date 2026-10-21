@@ -79,6 +79,7 @@ def main():
     report={'app':str(target),'sourceApp':str(APP),'codeHash':codehash,'installed':False,
             'routerSha256':hashlib.sha256((ROOT/'src/router.js').read_bytes()).hexdigest(),
             'patcherSha256':hashlib.sha256((ROOT/'picker.py').read_bytes()).hexdigest(),
+            'uiSha256':hashlib.sha256((ROOT/'src/history-buttons.js').read_bytes()).hexdigest(),
             'sameMainEntitlements':entitlements(target)==current_entitlements,
             'preservesFileTree':True,'integrityEnabled':True,'nativeGuiValidated':False}
     (args.out/'build-report.json').write_text(json.dumps(report,indent=2)+'\n')

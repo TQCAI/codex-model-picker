@@ -37,3 +37,22 @@ nativeTest('compiled external selection does not write the shared default',async
  const result=await new C().setDefaultModelConfig('deepseek-v4-pro','high',null);
  assert.equal(result.status,'okOverridden');
 });
+nativeTest('compiled history manager bridge dispatches the action and invalidates visible cached turns',async()=>{
+ const begin=source.indexOf('async __pickerHistoryEdit(e){'),end=source.indexOf('getCachedConversationMetadata(',begin);
+ assert(begin>0&&end>begin);
+ const picker=createModelPicker(catalog),sent=[],applied=[],turns=[{turnId:'A'},{turnId:'B'},{turnId:'C'},{turnId:'D'}];
+ const response={thread:{id:'chat'},turnsBackwardsCursor:'D'};
+ const C=vm.runInNewContext('(class {'+source.slice(begin,end)+'getHostId(){return "local"}history={turnMergePolicy:{}};threadStore={getConversation(){return {turns}}};requestClient={async sendRequest(m,p){sent.push([m,p]);return response}};applyRevertResponseToConversation(p){applied.push(p)}})',{__codexModelPicker:picker,Vb:s=>s.turns,turns,sent,applied,response});
+ const manager=new C();manager.getConversation('chat');
+ try{
+  await globalThis.__codexModelPickerHistory({threadId:'chat',turnId:'C',hostId:'local',action:'delete'});
+  assert.equal(sent[0][0],'modelPicker/history/edit');assert.equal(sent[0][1].turnId,'C');
+  assert.equal(applied[0].response,response);assert.equal(applied[0].revertedTurns,turns);
+ }finally{delete globalThis.__codexModelPickerHistory}
+});
+nativeTest('compiled user message places accessible history controls beside copy with current thread/turn identity',()=>{
+ const user=fs.readFileSync('candidate/user-message-2414227646e3.js','utf8');
+ assert.equal((user.match(/U\?q:null,\(0,\$\.jsx\)\(__codexHistoryActionsUI/g)||[]).length,1);
+ assert(user.includes('threadId:k,turnId:A,hostId:M,useState:Ht.useState,useRef:Ht.useRef'));
+ assert(user.includes('let Ft;true||'));assert(user.includes("'data-model-picker-history-action':action"));
+});

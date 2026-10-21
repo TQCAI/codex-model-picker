@@ -13,6 +13,12 @@ import sys
 ROOT = Path(__file__).resolve().parent
 APP = Path('/Applications/ChatGPT.app')
 ASSET = 'webview/assets/app-initial-90eb42395b7d.js'
+USER_ASSET = 'webview/assets/user-message-2414227646e3.js'
+MANAGER_ANCHOR = 'getConversation(e){return this.threadStore.getConversation(e)}'
+MANAGER_PATCH = ('async __pickerHistoryEdit(e){let t=this.getConversation(e.threadId);if(t==null)throw Error(`聊天未加载`);'
+    'let n=Vb(t,this.history.turnMergePolicy);let r=await this.requestClient.sendRequest(`modelPicker/history/edit`,e);'
+    'this.applyRevertResponseToConversation({conversationId:e.threadId,response:r,revertedTurns:n});return r}'
+    'getConversation(e){__codexModelPicker.bindManager(this);return this.threadStore.getConversation(e)}')
 
 
 def sha(data):
@@ -89,7 +95,8 @@ def remove_previous_patch(source):
     fingerprint=sha(previous.encode())
     v1='0707304b1dd473147a555d1f93bcb956d83940c578c8ada518a13eaf217daf59'
     v2='53b3442a8eef296df0bbab054edd576f21fcd8d7c30255e263d425a619cfa0fc'
-    if fingerprint not in {v1,v2,sha((ROOT/'src/router.js').read_bytes())}:
+    v21='01cf5bc827f3eb886932f06447c7baa6902f4cd40460ddd4ddadac424d4e7eb7'
+    if fingerprint not in {v1,v2,v21,sha((ROOT/'src/router.js').read_bytes())}:
         raise ValueError('Unknown existing model-picker patch; refusing to overwrite')
     begin = position + len(marker)
     _, consumed = json.JSONDecoder().raw_decode(source[begin:])
@@ -97,6 +104,8 @@ def remove_previous_patch(source):
     if source[end:end+3] != ');\n':
         raise ValueError('Malformed previous model-picker catalog boundary')
     source = source[end+3:]
+    if fingerprint not in {v1,v2,v21}:
+        source=once(source,MANAGER_PATCH,MANAGER_ANCHOR)
     nested='' if fingerprint==v1 else ',(m,p)=>this.__pickerEnqueue(m,p,n)'
     source = once(source,
         'enqueueRequest(e,t,n,...r){return __codexModelPicker.run(this.hostId,e,t,p=>this.__pickerEnqueue(e,p,n,...r)'+nested+')}__pickerEnqueue(e,t,n,r=t=>{',
@@ -134,8 +143,25 @@ def patch_source(source, catalog):
     source = once(source,
         'runThreadModelSettingsUpdate(e,t){return this.threadSettingsUpdates.runThreadModelSettingsUpdate(e,t)}',
         'async runThreadModelSettingsUpdate(e,t){let r=await this.threadSettingsUpdates.runThreadModelSettingsUpdate(e,t);let p=__codexModelPicker.providerFor(e);if(this.getHostId()===`local`&&p!=null)this.updateConversationState(e,s=>{s.modelProvider=p});return r}')
+    source=once(source,MANAGER_ANCHOR,MANAGER_PATCH)
     # The route registry contains endpoints and env variable names only, never keys.
     return router + '\nconst __codexModelPicker=createModelPicker(' + json.dumps(catalog, ensure_ascii=False) + ');\n' + source
+
+
+def patch_user_source(source):
+    ui=(ROOT/'src/history-buttons.js').read_text()
+    marker='\n/* codex-model-picker user-message boundary */\n'
+    if marker in source:
+        prefix,source=source.split(marker,1)
+        if sha(prefix.encode())!=sha(ui.encode()):raise ValueError('Unknown history button patch; refusing overwrite')
+        source=once(source,'let Ft;true||n[142]!==b||','let Ft;n[142]!==b||')
+        source=once(source,
+            'U?q:null,(0,$.jsx)(__codexHistoryActionsUI,{threadId:k,turnId:A,hostId:M,useState:Ht.useState,useRef:Ht.useRef,jsx:$.jsx,jsxs:$.jsxs,Button:t,Tooltip:S},`${k}:${A}`),b,',
+            'U?q:null,b,')
+    source=once(source,'let Ft;n[142]!==b||','let Ft;true||n[142]!==b||')
+    source=once(source,'U?q:null,b,',
+        'U?q:null,(0,$.jsx)(__codexHistoryActionsUI,{threadId:k,turnId:A,hostId:M,useState:Ht.useState,useRef:Ht.useRef,jsx:$.jsx,jsxs:$.jsxs,Button:t,Tooltip:S},`${k}:${A}`),b,')
+    return ui+marker+source
 
 
 def build(catalog_path, out, app=APP):
@@ -148,12 +174,21 @@ def build(catalog_path, out, app=APP):
     out.mkdir(parents=True, exist_ok=True)
     asset_path = out / Path(ASSET).name
     asset_path.write_bytes(patched)
+    user_source,user_header=read_asset(app/'Contents/Resources/app.asar',USER_ASSET)
+    if user_header!=header_sha:raise ValueError('App changed during build')
+    user_patched=patch_user_source(user_source.decode()).encode()
+    (out/Path(USER_ASSET).name).write_bytes(user_patched)
+    user_check=subprocess.run(['node','--check','--input-type=module'],input=user_patched,capture_output=True)
+    if user_check.returncode:raise RuntimeError(user_check.stderr.decode()[-2000:])
     check = subprocess.run(['node', '--check', '--input-type=module'], input=patched, capture_output=True)
     if check.returncode:
         raise RuntimeError(check.stderr.decode()[-2000:])
     report = {'status':'candidate-only', 'installed':False, 'sourceApp':str(app),
               'sourceAsarHeaderSha256':header_sha, 'asset':ASSET,
               'routerSha256':sha((ROOT/'src/router.js').read_bytes()), 'patcherSha256':sha(Path(__file__).read_bytes()),
+              'uiSha256':sha((ROOT/'src/history-buttons.js').read_bytes()),
+              'assets':[{'asset':ASSET,'originalSha256':sha(source),'patchedSha256':sha(patched)},
+                        {'asset':USER_ASSET,'originalSha256':sha(user_source),'patchedSha256':sha(user_patched)}],
               'originalSha256':sha(source), 'patchedSha256':sha(patched),
               'providers':[p['id'] for p in catalog['providers']],
               'limits':['Idle persistent chats switch provider by reloading the same saved thread; active/ephemeral chats are not switched.',

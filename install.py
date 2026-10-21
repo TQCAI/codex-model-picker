@@ -18,12 +18,15 @@ def prepare(candidate):
     manifest=json.loads((candidate/'manifest.json').read_text())
     app=Path(manifest['sourceApp'])
     archive=app/'Contents/Resources/app.asar'
-    original,header_hash=read_asset(archive,manifest['asset'])
-    if sha(original)!=manifest['originalSha256'] or header_hash!=manifest['sourceAsarHeaderSha256']:
-        raise RuntimeError('App changed since build. Rebuild; do not overwrite another patch.')
-    replacement=(candidate/Path(manifest['asset']).name).read_bytes()
-    if sha(replacement)!=manifest['patchedSha256']:
-        raise RuntimeError('Candidate hash mismatch')
+    replacements={};header_hash=None
+    assets=manifest.get('assets',[manifest])
+    for item in assets:
+        original,header_hash=read_asset(archive,item['asset'])
+        if sha(original)!=item['originalSha256'] or header_hash!=manifest['sourceAsarHeaderSha256']:
+            raise RuntimeError('App changed since build. Rebuild; do not overwrite another patch.')
+        replacement=(candidate/Path(item['asset']).name).read_bytes()
+        if sha(replacement)!=item['patchedSha256']:raise RuntimeError('Candidate hash mismatch')
+        replacements[item['asset']]=replacement
     with archive.open('rb') as f:
         _,header_size,_,length=struct.unpack('<4I',f.read(16))
         header=json.loads(f.read(length))
@@ -37,7 +40,8 @@ def prepare(candidate):
     walk(header)
     offset=0
     for name,e,_,size in entries:
-        if name==manifest['asset']:
+        if name in replacements:
+            replacement=replacements[name]
             size=len(replacement)
             block=e.get('integrity',{}).get('blockSize',4194304)
             e['size']=size
@@ -53,14 +57,15 @@ def prepare(candidate):
     with archive.open('rb') as source,(staged/'app.asar').open('wb') as out:
         out.write(struct.pack('<4I',4,pickle_size+4,pickle_size,len(raw))+raw+bytes(padding))
         for name,_,old_offset,size in entries:
-            if name==manifest['asset']:out.write(replacement);continue
+            if name in replacements:out.write(replacements[name]);continue
             source.seek(header_size+8+old_offset)
             while size:
                 data=source.read(min(size,8*1024*1024))
                 if not data:raise EOFError('Truncated archive')
                 out.write(data);size-=len(data)
-    checked,_=read_asset(staged/'app.asar',manifest['asset'])
-    if sha(checked)!=manifest['patchedSha256']:raise RuntimeError('Repacked archive check failed')
+    for item in assets:
+        checked,_=read_asset(staged/'app.asar',item['asset'])
+        if sha(checked)!=item['patchedSha256']:raise RuntimeError('Repacked archive check failed')
     info=plistlib.loads((app/'Contents/Info.plist').read_bytes())
     info['ElectronAsarIntegrity']['Resources/app.asar']['hash']=sha(raw)
     (staged/'Info.plist').write_bytes(plistlib.dumps(info))

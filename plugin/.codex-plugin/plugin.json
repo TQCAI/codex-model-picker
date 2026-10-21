@@ -1,6 +1,6 @@
 {
   "name": "model-picker",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Open the local Codex external-model manager and launch isolated CLI sessions. Native-menu integration requires the separately built experimental patch.",
   "skills": "./skills/"
 }
