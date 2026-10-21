@@ -1,4 +1,4 @@
-/* codex-model-picker 0.3.0: model routing and durable history actions */
+/* codex-model-picker 0.3.1: model routing and durable history actions */
 function rolloutTurnSegments(text) {
   const records=text.split('\n').filter(s=>s.trim()).map(s=>JSON.parse(s));
   const turns=new Map();let current=null;
@@ -56,7 +56,7 @@ function compatibleRollout(source, target, providerForModel, fallback) {
   return {text,changed};
 }
 function createModelPicker(catalog) {
-  const models = new Map(), threads = new Map(), pending = new Map(), switching = new Set(), managers=new Map(), flattenedPaths=new Set();
+  const models = new Map(), threads = new Map(), pending = new Map(), switching = new Set(), managers=new Map(), flattenedPaths=new Set(), freshThreads=new Map();
   for (const provider of catalog.providers) for (const model of provider.models) {
     if (models.has(model.id)) throw Error('Model IDs must be unique: ' + model.id);
     models.set(model.id, {provider, model});
@@ -83,7 +83,16 @@ function createModelPicker(catalog) {
     if(!thread.path || thread.ephemeral)return null;
     if(!thread.path.startsWith('/') || thread.path.split('/').includes('..') || !thread.path.endsWith('.jsonl') || !thread.path.split('/').pop().includes(thread.id))
       throw Error('无法安全确认聊天历史文件，未修改。');
-    const meta=await rpc('fs/getMetadata',{path:thread.path});
+    let meta;
+    try { meta=await rpc('fs/getMetadata',{path:thread.path}); }
+    catch(error) {
+      // thread/start reserves a rollout path but writes it lazily. Only a
+      // thread created here with no accepted input may have no history yet.
+      // Never treat a missing existing history or a permission error as empty.
+      if(freshThreads.get(thread.id)?.path!==thread.path || thread.status?.type!=='idle' ||
+         !/No such file or directory \(os error 2\)$/.test(String(error?.message??error)))throw error;
+      return null;
+    }
     if(!meta.isFile || meta.isSymlink)throw Error('聊天历史必须是普通文件，未修改。');
     const {dataBase64}=await rpc('fs/readFile',{path:thread.path});
     if(dataBase64.length>64*1024*1024)throw Error('聊天历史过大，请在新聊天中切换模型。');
@@ -123,12 +132,17 @@ function createModelPicker(catalog) {
     if (terminals.data.length || descendants.data.length || goal?.status==='active' || goal?.status==='paused') {
       throw Error('当前聊天有后台终端、子聊天或未结束目标；请先结束它们，或新建聊天切换模型。');
     }
-    const saved = await rpc('thread/resume',{threadId:id,excludeTurns:true});
+    // A never-used thread cannot resume from disk yet. Keep the exact start
+    // response (and later settings) as its runtime snapshot; native unarchive
+    // materializes the empty rollout during the usual reload below.
+    const fresh=freshThreads.get(id);
+    const saved=!plan && fresh?.path===thread.path ? fresh.saved : await rpc('thread/resume',{threadId:id,excludeTurns:true});
+    if(!saved?.sandbox || saved.approvalPolicy==null)throw Error('无法确认新聊天的当前权限，请在新聊天中直接选择目标模型。');
     const oldProvider = saved.modelProvider ?? thread.modelProvider;
     if (oldProvider !== 'openai' && !providerById(oldProvider)) throw Error('原 provider 未登记，无法安全切换或回滚。');
     const restoreSettings = {cwd:saved.cwd, approvalPolicy:saved.approvalPolicy,
       approvalsReviewer:saved.approvalsReviewer, sandboxPolicy:saved.sandbox,
-      disabledPluginIds:saved.disabledPluginIds};
+      disabledPluginIds:saved.disabledPluginIds,effort:saved.reasoningEffort,serviceTier:saved.serviceTier};
     const resume = {threadId:id,excludeTurns:true,cwd:saved.cwd,
       runtimeWorkspaceRoots:saved.runtimeWorkspaceRoots,approvalPolicy:saved.approvalPolicy,
       approvalsReviewer:saved.approvalsReviewer,sandbox:'read-only'};
@@ -318,6 +332,7 @@ function createModelPicker(catalog) {
     has:id=>models.has(id),
     providerFor:id=>threads.get(id),
     ignoreNotification(host,method,params) {
+      if(host==='local' && ['turn/started','thread/closed'].includes(method))freshThreads.delete(params?.threadId ?? params?.thread?.id);
       return host==='local' && switching.has(params?.threadId ?? params?.thread?.id) &&
         ['thread/archived','thread/unarchived','thread/closed','thread/reverted'].includes(method);
     },
@@ -328,7 +343,31 @@ function createModelPicker(catalog) {
       const previous=key ? pending.get(key) : null;
       const operation=(async()=>{
         if (previous) await previous.catch(()=>{});
-        if(method==='modelPicker/history/edit')return editHistory(params,rpc);
+        const commit=async p=>{
+          if(['turn/start','thread/inject_items','thread/shellCommand','thread/queue/start','thread/realtime/start','thread/revert'].includes(method) ||
+             (method==='thread/resume' && (p.history!=null || (p.path && p.path!==freshThreads.get(key)?.path))))freshThreads.delete(key);
+          const result=await next(p);
+          const fresh=freshThreads.get(key);
+          if(method==='thread/resume' && fresh && fresh.path===result?.thread?.path)fresh.saved=result;
+          if(method==='thread/settings/update' && fresh?.saved) {
+            // A named profile is resolved only by the backend; don't guess its
+            // effective sandbox if changed before the first persistent turn.
+            if(p.permissions!=null)fresh.saved=null;
+            else {
+              const update={...fresh.saved};
+              for(const field of ['cwd','approvalPolicy','approvalsReviewer','disabledPluginIds'])if(p[field]!=null)update[field]=p[field];
+              if(p.sandboxPolicy!=null)update.sandbox=p.sandboxPolicy;
+              if(p.model!=null)update.model=p.model;
+              if(p.effort!=null)update.reasoningEffort=p.effort;
+              if(p.collaborationMode?.settings?.model!=null)update.model=p.collaborationMode.settings.model;
+              if(p.collaborationMode?.settings?.reasoning_effort!=null)update.reasoningEffort=p.collaborationMode.settings.reasoning_effort;
+              if(Object.hasOwn(p,'serviceTier'))update.serviceTier=p.serviceTier;
+              fresh.saved=update;
+            }
+          }
+          return result;
+        };
+        if(method==='modelPicker/history/edit'){freshThreads.delete(key);return editHistory(params,rpc);}
         if (method==='thread/list' && Array.isArray(params?.modelProviders) && params.modelProviders.length) {
           params={...params,modelProviders:[...new Set([...params.modelProviders,...catalog.providers.map(p=>p.id)])]};
         }
@@ -340,13 +379,14 @@ function createModelPicker(catalog) {
           let current=threads.get(key);
           if (current==null && rpc) { const read=await rpc('thread/read',{threadId:key,includeTurns:false});remember(read);current=threads.get(key); }
           const target=modelOf(params)==null ? current : providerForModel(modelOf(params))?.id ?? 'openai';
-          if (current!==target && (providerById(current) || providerById(target))) return changeProvider(params,target,rpc,next);
+          if (current!==target && (providerById(current) || providerById(target))) return changeProvider(params,target,rpc,commit);
           // Also repair chats already switched by 0.2.0, including turns whose
           // model is omitted. No archive/write when the history is compatible.
-          if(target==='openai')return changeProvider(params,target,rpc,next);
+          if(target==='openai')return changeProvider(params,target,rpc,commit);
         }
-        let result=await next(params);
+        let result=await commit(params);
         remember(result);
+        if(method==='thread/start' && result?.thread?.path && !result.thread.ephemeral)freshThreads.set(result.thread.id,{path:result.thread.path,saved:result});
         if (method==='model/list') {
           const ids=new Set(result.data.map(m=>m.model)),added=[];
           for (const [id,{provider,model}] of models) {

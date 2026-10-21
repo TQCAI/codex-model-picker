@@ -96,7 +96,8 @@ def remove_previous_patch(source):
     v1='0707304b1dd473147a555d1f93bcb956d83940c578c8ada518a13eaf217daf59'
     v2='53b3442a8eef296df0bbab054edd576f21fcd8d7c30255e263d425a619cfa0fc'
     v21='01cf5bc827f3eb886932f06447c7baa6902f4cd40460ddd4ddadac424d4e7eb7'
-    if fingerprint not in {v1,v2,v21,sha((ROOT/'src/router.js').read_bytes())}:
+    v30='e3c815384f1fae993fa7864681a0c02c735ddf1f486b15a1957a576b68c06f58'
+    if fingerprint not in {v1,v2,v21,v30,sha((ROOT/'src/router.js').read_bytes())}:
         raise ValueError('Unknown existing model-picker patch; refusing to overwrite')
     begin = position + len(marker)
     _, consumed = json.JSONDecoder().raw_decode(source[begin:])
